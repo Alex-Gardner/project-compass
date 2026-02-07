@@ -1,0 +1,13 @@
+node_modules
+.env
+.env.local
+bun.lock
+*.log
+.DS_Store
+dist
+uploads/*
+!uploads/.gitkeep
+data/*.json
+
+api/uploads/*
+!api/uploads/.gitkeep
