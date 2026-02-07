@@ -1,0 +1,10 @@
+{
+  "name": "@project-compass/shared-types",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "devDependencies": {
+    "bun-types": "1.3.8",
+    "typescript": "5.9.3"
+  }
+}

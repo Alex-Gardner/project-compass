@@ -1,0 +1,16 @@
+{
+  "name": "project-compass",
+  "private": true,
+  "workspaces": [
+    "web-app",
+    "api",
+    "worker-jobs",
+    "packages/shared-types"
+  ],
+  "scripts": {
+    "dev:api": "cd api && bun run dev",
+    "dev:worker": "cd worker-jobs && bun run dev",
+    "dev:web": "cd web-app && bun run dev",
+    "dev": "bash scripts/dev.sh"
+  }
+}
