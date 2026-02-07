@@ -67,3 +67,6 @@ Build an automated helper for project managers at a general contracting company 
 - First dashboard views to ship (operations status vs dependency timeline vs exception queue).
 - Preferred confidence thresholds and issue severity tiers.
 - Whether template defaults are user-level only or can be shared at organization/project scope.
+
+## Stack Collaboration Output
+- See `STACK_PROPOSAL.md` for the finalized JS-first stack decisions (including Bun runtime, Tesseract.js OCR, model vendors, budget cap, dashboard scope, and SLA target).
