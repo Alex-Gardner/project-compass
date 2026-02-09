@@ -15,6 +15,12 @@ if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024 } });
 
+function csvEscape(value: unknown): string {
+  const text = String(value ?? "");
+  const escaped = text.replace(/"/g, "\"\"");
+  return `"${escaped}"`;
+}
+
 app.get("/health", async () => ({ ok: true }));
 
 app.post("/documents", async (request, reply) => {
@@ -137,6 +143,46 @@ app.get("/documents/:id", async (request, reply) => {
     fields: fieldRes.rows.map((row) => ({ ...row, confidence: Number(row.confidence) })),
     issues: issueRes.rows
   };
+});
+
+app.get("/documents/:id/export.csv", async (request, reply) => {
+  const schema = z.object({ id: z.string() });
+  const { id } = schema.parse(request.params);
+
+  const [docRes, fieldRes] = await Promise.all([
+    pool.query(`SELECT id, filename FROM documents WHERE id = $1`, [id]),
+    pool.query(
+      `SELECT name, value, confidence, source_page AS "sourcePage", source_bbox AS "sourceBBox", created_at AS "createdAt"
+       FROM extraction_fields
+       WHERE document_id = $1
+       ORDER BY created_at ASC`,
+      [id]
+    )
+  ]);
+
+  const document = docRes.rows[0];
+  if (!document) return reply.status(404).send({ error: "Document not found" });
+
+  const lines = [
+    "documentId,filename,fieldName,fieldValue,confidence,sourcePage,sourceBBox,createdAt",
+    ...fieldRes.rows.map((row) =>
+      [
+        csvEscape(id),
+        csvEscape(document.filename),
+        csvEscape(row.name),
+        csvEscape(row.value),
+        csvEscape(Number(row.confidence)),
+        csvEscape(row.sourcePage),
+        csvEscape(JSON.stringify(row.sourceBBox)),
+        csvEscape(row.createdAt)
+      ].join(",")
+    )
+  ];
+
+  return reply
+    .header("Content-Type", "text/csv; charset=utf-8")
+    .header("Content-Disposition", `attachment; filename="${document.filename.replace(/\\.pdf$/i, "")}-extraction.csv"`)
+    .send(lines.join("\n"));
 });
 
 app.get("/jobs/:id", async (request, reply) => {

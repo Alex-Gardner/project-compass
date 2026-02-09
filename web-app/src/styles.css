@@ -30,6 +30,30 @@ aside {
   background: rgba(255, 255, 255, 0.7);
 }
 
+.profile-switcher {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.profile-switcher select {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.role-pill {
+  margin: 0 0 14px;
+  display: inline-block;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e6fffb;
+  color: #0f766e;
+}
+
 nav {
   display: grid;
   gap: 10px;
@@ -58,6 +82,21 @@ section {
   padding: 20px;
 }
 
+.toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.toolbar select {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+  min-width: 280px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -77,6 +116,18 @@ button {
   padding: 8px 12px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.json-box {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #111827;
+  color: #d1fae5;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
 }
 
 .badge {
