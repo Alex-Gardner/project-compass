@@ -1,84 +1,52 @@
-# Permissions and Tooling Notes
+# Permissions and Tooling Notes (Tech Demo Scope)
 
-This file tracks external accounts, API keys, and access decisions needed to fully implement the Project Compass roadmap.
+This file tracks what is active now versus intentionally deferred while building the technical proof of concept.
 
-## Immediate (MVP Build Blockers)
+## Active Now
 
-### 1) Database and Queue Runtime
-- Requirement: local Docker access to run `postgres:16` and `redis:7`.
-- Needed from you:
-  - confirm Docker Desktop/Engine is installed and running
-  - permission to expose local ports `5432` and `6379`
+### 1) Local Runtime
+- Postgres + Redis for async processing.
+- Bun monorepo services (`api`, `worker-jobs`, `web-app`).
 
-### 2) GitHub Repository Access
-- Requirement: push branches, open PRs, and configure CI later.
-- Needed from you:
-  - confirm collaborator permissions for this repo
-  - decide branch protection rules for `main`
+### 2) Auth Mode: Demo Profiles (WorkOS deferred)
+- Current behavior: frontend-only profile switcher with three roles:
+  - Project Manager
+  - Viewer
+  - Site Admin
+- WorkOS integration is intentionally hibernated until post-demo hardening.
 
-## Near-Term External Service Wiring
+### 3) Notification Mode: Stubbed Logs (Resend/Twilio deferred)
+- Current behavior: worker logs when email/SMS should be sent.
+- No external provider APIs are called.
 
-### 3) WorkOS (SSO-only in v0.1)
-- Purpose: authentication and SSO.
-- Needed from you:
-  - WorkOS account/org
-  - API key and client ID
-  - callback URLs for local + production
+### 4) AI Provider: OpenAI only
+- Current behavior: worker supports OpenAI-based extraction when a real `OPENAI_API_KEY` is present.
+- Fallback behavior: deterministic local extraction stub when key is missing/placeholder.
 
-### 4) Resend
-- Purpose: email notifications adapter (initially scaffolded/feature-flagged).
-- Needed from you:
-  - Resend account
-  - API key
-  - verified sender domain/email
+### 5) Storage: Local Disk
+- Current behavior: uploaded PDFs remain on local disk.
+- Object storage is intentionally deferred.
 
-### 5) Twilio (feature-flagged)
-- Purpose: SMS notifications for later enablement.
-- Needed from you:
-  - Twilio account
-  - Account SID/Auth Token
-  - sending phone number or messaging service SID
+## Deferred (Hibernated for Tech Demo)
+1. WorkOS production SSO flow
+2. Resend delivery integration
+3. Twilio delivery integration
+4. Smartsheet publish integration
+5. Multi-provider AI routing (Claude/Gemini/etc.)
+6. Cloud object storage
+7. Observability/error tracking stack
 
-### 6) Smartsheet
-- Purpose: one-way publish adapter.
-- Needed from you:
-  - Smartsheet developer/app access
-  - API token
-  - target workspace/sheet permissions
-
-### 7) AI Providers
-- Purpose: model routing through `ai-gateway`.
-- Needed from you:
-  - OpenAI API key
-  - Anthropic (Claude) API key
-  - Google AI/Gemini API key
-  - nano-banana provider credentials (or confirmation of exact provider endpoint)
-  - daily budget cap confirmation (`$20/day` proposed)
-
-### 8) Object Storage
-- Purpose: durable file storage outside local disk.
-- Needed from you:
-  - choose provider (AWS S3 / Cloudflare R2 / MinIO)
-  - bucket name and region
-  - access key + secret
-
-### 9) Observability and Error Tracking
-- Purpose: production-ready monitoring.
-- Needed from you:
-  - Sentry project DSN (recommended)
-  - metrics stack preference (Prometheus/Grafana managed vs self-hosted)
-
-## Recommended Environment Variable Groups
-- `DATABASE_URL`, `REDIS_URL`, `PORT`, `CONFIDENCE_THRESHOLD`, `STORAGE_MODE`
-- `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`
-- `RESEND_API_KEY`
-- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
-- `SMARTSHEET_API_TOKEN`
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `NANO_BANANA_API_KEY`
-- `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`
-- `SENTRY_DSN`
+## OpenAI Setup Required For Live API Calls
+- Required account: OpenAI platform account with billing enabled.
+- Required secret: `OPENAI_API_KEY` in local `.env`.
+- Optional: `OPENAI_MODEL` (default `gpt-4o-mini`).
 
 ## Current Status
-- Local clone completed.
-- No OS-level permissions blocker encountered yet.
-- External service accounts are not yet wired in this repository.
+- Tech demo implementation is set to local-first behavior.
+- External integrations are intentionally stubbed/deferred.
+
+## OpenAI Access Check (February 8, 2026)
+- `.env` contains `OPENAI_API_KEY` with valid-looking format and `OPENAI_MODEL=gpt-5.2`.
+- Live API call reached OpenAI but failed with `429 quota exceeded`.
+- Impact: key is configured, but account/project billing or quota currently blocks usage.
+- Action needed: enable billing and/or raise API usage limits in OpenAI project settings.

@@ -6,7 +6,7 @@ export const pool = new Pool({
 });
 
 export const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
-export const queueKey = "queue:document-ingest";
+export const queueKey = process.env.QUEUE_KEY ?? "queue:document-ingest";
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;

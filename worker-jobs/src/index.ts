@@ -1,4 +1,6 @@
 import { ensureSchema, newId, pool, queueKey, redis } from "./db";
+import { extractFieldsForDemo } from "./extraction";
+import { logEmailSendIntent, logSmsSendIntent } from "./notification-stubs";
 
 const confidenceThreshold = Number(process.env.CONFIDENCE_THRESHOLD ?? 0.7);
 
@@ -33,7 +35,7 @@ async function processJob(payload: QueuePayload): Promise<void> {
     }
 
     const docRes = await client.query(
-      `SELECT id, filename, uploaded_by
+      `SELECT id, filename, storage_path, uploaded_by
        FROM documents
        WHERE id = $1`,
       [payload.documentId]
@@ -64,32 +66,17 @@ async function processJob(payload: QueuePayload): Promise<void> {
       [newId("aud"), payload.jobId, JSON.stringify({}), now]
     );
 
-    const extracted = [
-      {
-        id: newId("fld"),
-        name: "project_name",
-        value: String(document.filename).replace(/\.pdf$/i, ""),
-        confidence: 0.94,
-        sourcePage: 1,
-        sourceBBox: [0.1, 0.1, 0.5, 0.2]
-      },
-      {
-        id: newId("fld"),
-        name: "bid_due_date",
-        value: "TBD",
-        confidence: 0.62,
-        sourcePage: 1,
-        sourceBBox: [0.1, 0.3, 0.35, 0.4]
-      }
-    ];
+    const extracted = await extractFieldsForDemo(String(document.filename), String(document.storage_path));
 
     for (const field of extracted) {
+      const fieldId = newId("fld");
+
       await client.query(
         `INSERT INTO extraction_fields
          (id, document_id, name, value, confidence, source_page, source_bbox, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
         [
-          field.id,
+          fieldId,
           payload.documentId,
           field.name,
           field.value,
@@ -108,7 +95,7 @@ async function processJob(payload: QueuePayload): Promise<void> {
           [
             newId("iss"),
             payload.documentId,
-            field.id,
+            fieldId,
             `Field ${field.name} confidence ${Math.round(field.confidence * 100)}% is below threshold ${Math.round(confidenceThreshold * 100)}%`,
             now
           ]
@@ -117,19 +104,20 @@ async function processJob(payload: QueuePayload): Promise<void> {
     }
 
     const notificationId = newId("ntf");
+    const finishedAt = new Date().toISOString();
 
     await client.query(
       `UPDATE output_jobs
        SET status = 'completed', completed_at = $2, error = NULL
        WHERE id = $1`,
-      [payload.jobId, new Date().toISOString()]
+      [payload.jobId, finishedAt]
     );
 
     await client.query(
       `INSERT INTO notifications
        (id, user_id, type, title, body, created_at)
        VALUES ($1, $2, 'job.completed', 'Document processing complete', $3, $4)`,
-      [notificationId, document.uploaded_by, `Finished processing ${document.filename}`, new Date().toISOString()]
+      [notificationId, document.uploaded_by, `Finished processing ${document.filename}`, finishedAt]
     );
 
     await client.query(
@@ -141,12 +129,15 @@ async function processJob(payload: QueuePayload): Promise<void> {
         newId("aud"),
         payload.jobId,
         JSON.stringify({}),
-        new Date().toISOString(),
+        finishedAt,
         newId("aud"),
         notificationId,
         JSON.stringify({ userId: document.uploaded_by })
       ]
     );
+
+    logEmailSendIntent(String(document.uploaded_by), "Document processing complete", `Finished processing ${document.filename}`);
+    logSmsSendIntent(String(document.uploaded_by), `Project Compass: ${document.filename} is ready for review.`);
 
     await client.query("COMMIT");
   } catch (error) {
