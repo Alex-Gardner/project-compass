@@ -36,6 +36,37 @@ type ExtractionField = {
   createdAt: string;
 };
 
+type TaskRow = {
+  recordId: string;
+  documentId: string;
+  projectName: string;
+  gcName: string;
+  scName: string;
+  trade: string;
+  taskId: string;
+  taskName: string;
+  locationPath: string;
+  upstreamTaskId: string;
+  downstreamTaskId: string;
+  dependencyType: string;
+  lagDays: number;
+  plannedStart: string;
+  plannedFinish: string;
+  durationDays: number;
+  scAvailableFrom: string;
+  scAvailableTo: string;
+  allocationPct: number;
+  constraintType: string;
+  constraintNote: string;
+  constraintImpactDays: number;
+  status: string;
+  percentComplete: number;
+  confidence: number;
+  sourcePage: number;
+  sourceSnippet: string;
+  extractedAt: string;
+};
+
 type Notification = {
   id: string;
   title: string;
@@ -219,6 +250,7 @@ function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
   const [docs, setDocs] = React.useState<Doc[]>([]);
   const [selectedId, setSelectedId] = React.useState("");
   const [fields, setFields] = React.useState<ExtractionField[]>([]);
+  const [taskRows, setTaskRows] = React.useState<TaskRow[]>([]);
   const [rawJson, setRawJson] = React.useState<string>("{}");
   const [loading, setLoading] = React.useState(false);
 
@@ -238,6 +270,7 @@ function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
     }
     const data = await response.json();
     setFields(data.fields ?? []);
+    setTaskRows(data.taskRows ?? []);
     setRawJson(JSON.stringify(data, null, 2));
     setLoading(false);
   }, [profile, selectedId]);
@@ -291,26 +324,33 @@ function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
           <table>
             <thead>
               <tr>
-                <th>Field</th>
-                <th>Value</th>
+                <th>Task</th>
+                <th>Subcontractor</th>
+                <th>Trade</th>
+                <th>Dependency</th>
+                <th>Planned Dates</th>
+                <th>Status</th>
                 <th>Confidence</th>
-                <th>Source Page</th>
-                <th>Source Box</th>
+                <th>Source</th>
               </tr>
             </thead>
             <tbody>
-              {fields.map((field) => (
-                <tr key={field.id}>
-                  <td>{field.name}</td>
-                  <td>{field.value}</td>
-                  <td>{Math.round(field.confidence * 100)}%</td>
-                  <td>{field.sourcePage}</td>
-                  <td>{JSON.stringify(field.sourceBBox)}</td>
+              {taskRows.map((row) => (
+                <tr key={row.recordId}>
+                  <td>{row.taskName || row.taskId || "(unknown task)"}</td>
+                  <td>{row.scName || "-"}</td>
+                  <td>{row.trade || "-"}</td>
+                  <td>{row.dependencyType} {row.lagDays ? `(${row.lagDays}d)` : ""}</td>
+                  <td>{row.plannedStart || "?"} {"->"} {row.plannedFinish || "?"}</td>
+                  <td>{row.status} ({Math.round(row.percentComplete)}%)</td>
+                  <td>{Math.round(row.confidence * 100)}%</td>
+                  <td>p{row.sourcePage}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {!fields.length && <p>No extracted fields yet for this document.</p>}
+          {!taskRows.length && !fields.length && <p>No extracted rows yet for this document.</p>}
+          {!taskRows.length && fields.length && <p>Row extraction not found; legacy field extraction exists.</p>}
           <h3>Raw JSON Output</h3>
           <pre className="json-box">{rawJson}</pre>
         </>

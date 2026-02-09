@@ -16,9 +16,15 @@ Services:
 ## Tech Demo Scope
 - Auth: demo profile switcher in UI (Project Manager / Viewer / Site Admin)
 - Notifications: Resend/Twilio stub logs only
-- AI: OpenAI-only path enabled; fallback to local extraction stub if key is missing
+- AI: OpenAI-only path enabled; fallback to local row extraction if key is missing
 - Storage: on-disk files
 - Deferred: WorkOS, Smartsheet, object storage, and observability hardening
+
+## Single-Table Extraction Output
+- Worker now produces one row per task assignment and stores it in `extraction_task_rows`.
+- `GET /documents/:id` now includes `taskRows` alongside existing `fields` for compatibility.
+- `GET /documents/:id/export.csv` exports canonical single-table columns in fixed order.
+- Use `EXTRACTION_MODE=row` in `.env` for row extraction mode (default).
 
 ## OpenAI Connection (Local)
 1. Create an API key in the OpenAI dashboard.

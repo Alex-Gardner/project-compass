@@ -13,7 +13,9 @@ export function newId(prefix: string): string {
 }
 
 export async function ensureSchema(): Promise<void> {
-  await pool.query(`
+  await pool.query("SELECT pg_advisory_lock($1)", [9021001]);
+  try {
+    await pool.query(`
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
       filename TEXT NOT NULL,
@@ -42,6 +44,37 @@ export async function ensureSchema(): Promise<void> {
       source_page INTEGER NOT NULL,
       source_bbox JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS extraction_task_rows (
+      record_id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      project_name TEXT NOT NULL,
+      gc_name TEXT NOT NULL,
+      sc_name TEXT NOT NULL,
+      trade TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      task_name TEXT NOT NULL,
+      location_path TEXT NOT NULL,
+      upstream_task_id TEXT NOT NULL,
+      downstream_task_id TEXT NOT NULL,
+      dependency_type TEXT NOT NULL,
+      lag_days INTEGER NOT NULL,
+      planned_start DATE,
+      planned_finish DATE,
+      duration_days INTEGER NOT NULL,
+      sc_available_from DATE,
+      sc_available_to DATE,
+      allocation_pct NUMERIC(5,2) NOT NULL,
+      constraint_type TEXT NOT NULL,
+      constraint_note TEXT NOT NULL,
+      constraint_impact_days INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      percent_complete NUMERIC(5,2) NOT NULL,
+      confidence NUMERIC(4,3) NOT NULL,
+      source_page INTEGER NOT NULL,
+      source_snippet TEXT NOT NULL,
+      extracted_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS issues (
@@ -77,7 +110,13 @@ export async function ensureSchema(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_output_jobs_document_status ON output_jobs (document_id, status);
     CREATE INDEX IF NOT EXISTS idx_extraction_fields_document ON extraction_fields (document_id);
+    CREATE INDEX IF NOT EXISTS idx_task_rows_document ON extraction_task_rows (document_id);
+    CREATE INDEX IF NOT EXISTS idx_task_rows_task_id ON extraction_task_rows (task_id);
+    CREATE INDEX IF NOT EXISTS idx_task_rows_sc_name ON extraction_task_rows (sc_name);
     CREATE INDEX IF NOT EXISTS idx_issues_document_status ON issues (document_id, status);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications (user_id, read_at);
   `);
+  } finally {
+    await pool.query("SELECT pg_advisory_unlock($1)", [9021001]);
+  }
 }

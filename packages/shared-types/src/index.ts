@@ -1,5 +1,8 @@
 export type JobStatus = "queued" | "processing" | "completed" | "failed";
 export type IssueSeverity = "low" | "medium" | "high";
+export type DependencyType = "finish_to_start" | "start_to_start" | "finish_to_finish" | "start_to_finish" | "none";
+export type ConstraintType = "none" | "material" | "crew" | "access" | "permit" | "weather" | "other";
+export type TaskStatus = "not_started" | "in_progress" | "blocked" | "complete" | "unknown";
 
 export interface DocumentRecord {
   id: string;
@@ -29,6 +32,37 @@ export interface ExtractionFieldRecord {
   sourcePage: number;
   sourceBBox: [number, number, number, number];
   createdAt: string;
+}
+
+export interface TaskAssignmentRow {
+  recordId: string;
+  documentId: string;
+  projectName: string;
+  gcName: string;
+  scName: string;
+  trade: string;
+  taskId: string;
+  taskName: string;
+  locationPath: string;
+  upstreamTaskId: string;
+  downstreamTaskId: string;
+  dependencyType: DependencyType;
+  lagDays: number;
+  plannedStart: string;
+  plannedFinish: string;
+  durationDays: number;
+  scAvailableFrom: string;
+  scAvailableTo: string;
+  allocationPct: number;
+  constraintType: ConstraintType;
+  constraintNote: string;
+  constraintImpactDays: number;
+  status: TaskStatus;
+  percentComplete: number;
+  confidence: number;
+  sourcePage: number;
+  sourceSnippet: string;
+  extractedAt: string;
 }
 
 export interface IssueRecord {

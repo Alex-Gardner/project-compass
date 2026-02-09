@@ -21,6 +21,37 @@ function csvEscape(value: unknown): string {
   return `"${escaped}"`;
 }
 
+const taskRowCsvHeaders = [
+  "record_id",
+  "document_id",
+  "project_name",
+  "gc_name",
+  "sc_name",
+  "trade",
+  "task_id",
+  "task_name",
+  "location_path",
+  "upstream_task_id",
+  "downstream_task_id",
+  "dependency_type",
+  "lag_days",
+  "planned_start",
+  "planned_finish",
+  "duration_days",
+  "sc_available_from",
+  "sc_available_to",
+  "allocation_pct",
+  "constraint_type",
+  "constraint_note",
+  "constraint_impact_days",
+  "status",
+  "percent_complete",
+  "confidence",
+  "source_page",
+  "source_snippet",
+  "extracted_at"
+] as const;
+
 app.get("/health", async () => ({ ok: true }));
 
 app.post("/documents", async (request, reply) => {
@@ -109,7 +140,7 @@ app.get("/documents/:id", async (request, reply) => {
   const schema = z.object({ id: z.string() });
   const { id } = schema.parse(request.params);
 
-  const [docRes, jobRes, fieldRes, issueRes] = await Promise.all([
+  const [docRes, jobRes, fieldRes, issueRes, taskRowRes] = await Promise.all([
     pool.query(
       `SELECT id, filename, storage_path AS "storagePath", uploaded_by AS "uploadedBy", created_at AS "createdAt"
        FROM documents WHERE id = $1`,
@@ -132,6 +163,41 @@ app.get("/documents/:id", async (request, reply) => {
               details, created_at AS "createdAt"
        FROM issues WHERE document_id = $1 ORDER BY created_at ASC`,
       [id]
+    ),
+    pool.query(
+      `SELECT
+         record_id AS "recordId",
+         document_id AS "documentId",
+         project_name AS "projectName",
+         gc_name AS "gcName",
+         sc_name AS "scName",
+         trade,
+         task_id AS "taskId",
+         task_name AS "taskName",
+         location_path AS "locationPath",
+         upstream_task_id AS "upstreamTaskId",
+         downstream_task_id AS "downstreamTaskId",
+         dependency_type AS "dependencyType",
+         lag_days AS "lagDays",
+         COALESCE(to_char(planned_start, 'YYYY-MM-DD'), '') AS "plannedStart",
+         COALESCE(to_char(planned_finish, 'YYYY-MM-DD'), '') AS "plannedFinish",
+         duration_days AS "durationDays",
+         COALESCE(to_char(sc_available_from, 'YYYY-MM-DD'), '') AS "scAvailableFrom",
+         COALESCE(to_char(sc_available_to, 'YYYY-MM-DD'), '') AS "scAvailableTo",
+         allocation_pct AS "allocationPct",
+         constraint_type AS "constraintType",
+         constraint_note AS "constraintNote",
+         constraint_impact_days AS "constraintImpactDays",
+         status,
+         percent_complete AS "percentComplete",
+         confidence,
+         source_page AS "sourcePage",
+         source_snippet AS "sourceSnippet",
+         extracted_at AS "extractedAt"
+       FROM extraction_task_rows
+       WHERE document_id = $1
+       ORDER BY extracted_at ASC, record_id ASC`,
+      [id]
     )
   ]);
 
@@ -141,7 +207,17 @@ app.get("/documents/:id", async (request, reply) => {
     document: docRes.rows[0],
     job: jobRes.rows[0] ?? null,
     fields: fieldRes.rows.map((row) => ({ ...row, confidence: Number(row.confidence) })),
-    issues: issueRes.rows
+    issues: issueRes.rows,
+    taskRows: taskRowRes.rows.map((row) => ({
+      ...row,
+      lagDays: Number(row.lagDays),
+      durationDays: Number(row.durationDays),
+      allocationPct: Number(row.allocationPct),
+      constraintImpactDays: Number(row.constraintImpactDays),
+      percentComplete: Number(row.percentComplete),
+      confidence: Number(row.confidence),
+      sourcePage: Number(row.sourcePage)
+    }))
   };
 });
 
@@ -149,13 +225,21 @@ app.get("/documents/:id/export.csv", async (request, reply) => {
   const schema = z.object({ id: z.string() });
   const { id } = schema.parse(request.params);
 
-  const [docRes, fieldRes] = await Promise.all([
+  const [docRes, rowRes] = await Promise.all([
     pool.query(`SELECT id, filename FROM documents WHERE id = $1`, [id]),
     pool.query(
-      `SELECT name, value, confidence, source_page AS "sourcePage", source_bbox AS "sourceBBox", created_at AS "createdAt"
-       FROM extraction_fields
+      `SELECT record_id, document_id, project_name, gc_name, sc_name, trade, task_id, task_name, location_path,
+              upstream_task_id, downstream_task_id, dependency_type, lag_days,
+              COALESCE(to_char(planned_start, 'YYYY-MM-DD'), '') AS planned_start,
+              COALESCE(to_char(planned_finish, 'YYYY-MM-DD'), '') AS planned_finish,
+              duration_days,
+              COALESCE(to_char(sc_available_from, 'YYYY-MM-DD'), '') AS sc_available_from,
+              COALESCE(to_char(sc_available_to, 'YYYY-MM-DD'), '') AS sc_available_to,
+              allocation_pct, constraint_type, constraint_note, constraint_impact_days, status, percent_complete,
+              confidence, source_page, source_snippet, extracted_at
+       FROM extraction_task_rows
        WHERE document_id = $1
-       ORDER BY created_at ASC`,
+       ORDER BY extracted_at ASC, record_id ASC`,
       [id]
     )
   ]);
@@ -164,19 +248,8 @@ app.get("/documents/:id/export.csv", async (request, reply) => {
   if (!document) return reply.status(404).send({ error: "Document not found" });
 
   const lines = [
-    "documentId,filename,fieldName,fieldValue,confidence,sourcePage,sourceBBox,createdAt",
-    ...fieldRes.rows.map((row) =>
-      [
-        csvEscape(id),
-        csvEscape(document.filename),
-        csvEscape(row.name),
-        csvEscape(row.value),
-        csvEscape(Number(row.confidence)),
-        csvEscape(row.sourcePage),
-        csvEscape(JSON.stringify(row.sourceBBox)),
-        csvEscape(row.createdAt)
-      ].join(",")
-    )
+    taskRowCsvHeaders.join(","),
+    ...rowRes.rows.map((row) => taskRowCsvHeaders.map((header) => csvEscape(row[header])).join(","))
   ];
 
   return reply
