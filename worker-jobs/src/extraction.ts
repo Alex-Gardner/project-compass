@@ -1,14 +1,11 @@
 import OpenAI from "openai";
 import { readFile } from "node:fs/promises";
 import { PDFParse } from "pdf-parse";
+import type { ConstraintType, DependencyType, TaskAssignmentRow, TaskStatus } from "@project-compass/shared-types";
 
-export type ExtractedField = {
-  name: string;
-  value: string;
-  confidence: number;
-  sourcePage: number;
-  sourceBBox: [number, number, number, number];
-};
+const dependencyTypes: DependencyType[] = ["finish_to_start", "start_to_start", "finish_to_finish", "start_to_finish", "none"];
+const constraintTypes: ConstraintType[] = ["none", "material", "crew", "access", "permit", "weather", "other"];
+const taskStatuses: TaskStatus[] = ["not_started", "in_progress", "blocked", "complete", "unknown"];
 
 function isOpenAiConfigured(): boolean {
   const key = process.env.OPENAI_API_KEY;
@@ -19,7 +16,62 @@ function normalizeText(input: string): string {
   return input.replace(/\s+/g, " ").trim();
 }
 
-function heuristicExtract(filename: string, pdfText: string): ExtractedField[] {
+function normalizeDate(input: string): string {
+  const trimmed = String(input ?? "").trim();
+  if (!trimmed) return "";
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return "";
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function clamp(min: number, value: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseEnum<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_") as T;
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function rowSchemaNormalize(row: Partial<TaskAssignmentRow>, filename: string, documentId: string): TaskAssignmentRow {
+  const plannedStart = normalizeDate(String(row.plannedStart ?? ""));
+  const plannedFinish = normalizeDate(String(row.plannedFinish ?? ""));
+  const scAvailableFrom = normalizeDate(String(row.scAvailableFrom ?? ""));
+  const scAvailableTo = normalizeDate(String(row.scAvailableTo ?? ""));
+
+  return {
+    recordId: String(row.recordId ?? `row_${crypto.randomUUID().slice(0, 8)}`),
+    documentId,
+    projectName: String(row.projectName ?? filename.replace(/\.pdf$/i, "")).trim(),
+    gcName: String(row.gcName ?? "").trim(),
+    scName: String(row.scName ?? "").trim(),
+    trade: String(row.trade ?? "").trim(),
+    taskId: String(row.taskId ?? "").trim(),
+    taskName: String(row.taskName ?? "").trim(),
+    locationPath: String(row.locationPath ?? "").trim(),
+    upstreamTaskId: String(row.upstreamTaskId ?? "").trim(),
+    downstreamTaskId: String(row.downstreamTaskId ?? "").trim(),
+    dependencyType: parseEnum(String(row.dependencyType ?? "none"), dependencyTypes, "none"),
+    lagDays: Number.isFinite(Number(row.lagDays)) ? Number(row.lagDays) : 0,
+    plannedStart,
+    plannedFinish,
+    durationDays: Number.isFinite(Number(row.durationDays)) ? Number(row.durationDays) : 0,
+    scAvailableFrom,
+    scAvailableTo,
+    allocationPct: clamp(0, Number(row.allocationPct ?? 0) || 0, 100),
+    constraintType: parseEnum(String(row.constraintType ?? "none"), constraintTypes, "none"),
+    constraintNote: String(row.constraintNote ?? "").trim(),
+    constraintImpactDays: Number.isFinite(Number(row.constraintImpactDays)) ? Number(row.constraintImpactDays) : 0,
+    status: parseEnum(String(row.status ?? "unknown"), taskStatuses, "unknown"),
+    percentComplete: clamp(0, Number(row.percentComplete ?? 0) || 0, 100),
+    confidence: clamp(0, Number(row.confidence ?? 0.45) || 0.45, 1),
+    sourcePage: Number.isFinite(Number(row.sourcePage)) ? Number(row.sourcePage) : 1,
+    sourceSnippet: String(row.sourceSnippet ?? "").trim(),
+    extractedAt: new Date().toISOString()
+  };
+}
+
+function heuristicExtractRows(filename: string, documentId: string, pdfText: string): TaskAssignmentRow[] {
   const text = normalizeText(pdfText);
   const projectMatch = text.match(
     /(?:project\s*(?:name)?|job\s*(?:name|title)?|subject)\s*[:\-]\s*([A-Za-z0-9 ,.&()\/-]{3,120}?)(?=\s+(?:bid\s+due|bid\s+date|due\s+date|scope)\b|$)/i
@@ -27,31 +79,39 @@ function heuristicExtract(filename: string, pdfText: string): ExtractedField[] {
   const bidDateMatch = text.match(
     /(?:bid\s+due\s+date|bid\s+date|proposal\s+due|due\s+date)\s*[:\-]?\s*([A-Za-z0-9,\/ -]{4,40}?)(?=\s+scope\b|$)/i
   );
-  const scopeSummary = text.slice(0, 180) || filename.replace(/\.pdf$/i, "");
+  const scopeMatch = text.match(/(?:scope|work\s*scope|description)\s*[:\-]\s*([^]{1,220})/i);
+  const tradeMatch = text.match(/(?:trade|discipline)\s*[:\-]\s*([A-Za-z0-9 &\/-]{2,50})/i);
 
-  return [
+  const row = rowSchemaNormalize(
     {
-      name: "project_name",
-      value: (projectMatch?.[1] ?? filename.replace(/\.pdf$/i, "")).trim(),
-      confidence: projectMatch ? 0.76 : 0.58,
+      projectName: projectMatch?.[1] ?? filename.replace(/\.pdf$/i, ""),
+      scName: "",
+      trade: tradeMatch?.[1] ?? "",
+      taskId: "T-001",
+      taskName: (scopeMatch?.[1] ?? "Document-derived task").slice(0, 80),
+      locationPath: "",
+      dependencyType: "none",
+      lagDays: 0,
+      plannedStart: "",
+      plannedFinish: normalizeDate(bidDateMatch?.[1] ?? ""),
+      durationDays: 0,
+      scAvailableFrom: "",
+      scAvailableTo: "",
+      allocationPct: 0,
+      constraintType: "none",
+      constraintNote: "",
+      constraintImpactDays: 0,
+      status: "unknown",
+      percentComplete: 0,
+      confidence: text ? 0.55 : 0.35,
       sourcePage: 1,
-      sourceBBox: [0.1, 0.1, 0.5, 0.2]
+      sourceSnippet: text.slice(0, 180)
     },
-    {
-      name: "bid_due_date",
-      value: (bidDateMatch?.[1] ?? "TBD").trim(),
-      confidence: bidDateMatch ? 0.74 : 0.45,
-      sourcePage: 1,
-      sourceBBox: [0.1, 0.3, 0.35, 0.4]
-    },
-    {
-      name: "scope_summary",
-      value: scopeSummary,
-      confidence: text ? 0.67 : 0.4,
-      sourcePage: 1,
-      sourceBBox: [0.05, 0.45, 0.9, 0.65]
-    }
-  ];
+    filename,
+    documentId
+  );
+
+  return [row];
 }
 
 async function extractPdfText(storagePath: string): Promise<string> {
@@ -62,16 +122,17 @@ async function extractPdfText(storagePath: string): Promise<string> {
   return normalizeText(parsed.text ?? "");
 }
 
-export async function extractFieldsForDemo(filename: string, storagePath: string): Promise<ExtractedField[]> {
+export async function extractTaskRowsForDemo(filename: string, documentId: string, storagePath: string): Promise<TaskAssignmentRow[]> {
   const pdfText = await extractPdfText(storagePath).catch((error) => {
     console.error("[extract] failed to parse PDF text, using empty text", error);
     return "";
   });
-  const fallback = heuristicExtract(filename, pdfText);
+
+  const fallback = heuristicExtractRows(filename, documentId, pdfText);
 
   if (!isOpenAiConfigured()) {
     console.log("[openai-stub] OPENAI_API_KEY missing or placeholder, using local extraction fallback");
-    return heuristicExtract(filename, pdfText);
+    return fallback;
   }
 
   try {
@@ -83,62 +144,80 @@ export async function extractFieldsForDemo(filename: string, storagePath: string
       input: [
         {
           role: "system",
-          content: "You extract structured construction bidding fields for a tech demo. Return strict JSON only."
+          content:
+            "Extract a flat row table for subcontractor task assignments. Prefer explicit values from the document. " +
+            "Infer minimally. Unknown values must be empty strings (or 0 for numeric fields). Return strict JSON only."
         },
         {
           role: "user",
           content:
-            `Filename: ${filename}\n` +
-            `PDF Text:\n${pdfText.slice(0, 12000)}\n\n` +
-            "Return JSON with fields: project_name, bid_due_date, scope_summary. Include confidence from 0 to 1."
+            `Filename: ${filename}\nDocumentId: ${documentId}\n` +
+            `PDF Text:\n${pdfText.slice(0, 16000)}\n\n` +
+            "Return rows with columns: recordId, projectName, gcName, scName, trade, taskId, taskName, locationPath, upstreamTaskId, downstreamTaskId, dependencyType, lagDays, plannedStart, plannedFinish, durationDays, scAvailableFrom, scAvailableTo, allocationPct, constraintType, constraintNote, constraintImpactDays, status, percentComplete, confidence, sourcePage, sourceSnippet."
         }
       ],
       text: {
         format: {
           type: "json_schema",
-          name: "extraction_fields",
+          name: "task_assignment_rows",
           schema: {
             type: "object",
             additionalProperties: false,
             properties: {
-              fields: {
+              rows: {
                 type: "array",
                 items: {
                   type: "object",
                   additionalProperties: false,
                   properties: {
-                    name: { type: "string" },
-                    value: { type: "string" },
-                    confidence: { type: "number" }
+                    recordId: { type: "string" },
+                    projectName: { type: "string" },
+                    gcName: { type: "string" },
+                    scName: { type: "string" },
+                    trade: { type: "string" },
+                    taskId: { type: "string" },
+                    taskName: { type: "string" },
+                    locationPath: { type: "string" },
+                    upstreamTaskId: { type: "string" },
+                    downstreamTaskId: { type: "string" },
+                    dependencyType: { type: "string" },
+                    lagDays: { type: "number" },
+                    plannedStart: { type: "string" },
+                    plannedFinish: { type: "string" },
+                    durationDays: { type: "number" },
+                    scAvailableFrom: { type: "string" },
+                    scAvailableTo: { type: "string" },
+                    allocationPct: { type: "number" },
+                    constraintType: { type: "string" },
+                    constraintNote: { type: "string" },
+                    constraintImpactDays: { type: "number" },
+                    status: { type: "string" },
+                    percentComplete: { type: "number" },
+                    confidence: { type: "number" },
+                    sourcePage: { type: "number" },
+                    sourceSnippet: { type: "string" }
                   },
-                  required: ["name", "value", "confidence"]
+                  required: [
+                    "recordId", "projectName", "gcName", "scName", "trade", "taskId", "taskName", "locationPath",
+                    "upstreamTaskId", "downstreamTaskId", "dependencyType", "lagDays", "plannedStart", "plannedFinish",
+                    "durationDays", "scAvailableFrom", "scAvailableTo", "allocationPct", "constraintType", "constraintNote",
+                    "constraintImpactDays", "status", "percentComplete", "confidence", "sourcePage", "sourceSnippet"
+                  ]
                 }
               }
             },
-            required: ["fields"]
+            required: ["rows"]
           }
         }
       }
     });
 
-    const output = response.output_text;
-    const parsed = JSON.parse(output) as { fields?: Array<{ name: string; value: string; confidence: number }> };
-    if (!parsed.fields?.length) return fallback;
+    const parsed = JSON.parse(response.output_text) as { rows?: Partial<TaskAssignmentRow>[] };
+    if (!parsed.rows?.length) return fallback;
 
-    return parsed.fields.map((field, index) => ({
-      name: field.name,
-      value: field.value,
-      confidence: Math.min(1, Math.max(0, Number(field.confidence) || 0.5)),
-      sourcePage: 1,
-      sourceBBox:
-        index === 0
-          ? [0.1, 0.1, 0.5, 0.2]
-          : index === 1
-            ? [0.1, 0.3, 0.35, 0.4]
-            : [0.05, 0.45, 0.9, 0.65]
-    }));
+    return parsed.rows.map((row) => rowSchemaNormalize(row, filename, documentId));
   } catch (error) {
     console.error("[openai] extraction failed, using fallback", error);
-    return heuristicExtract(filename, pdfText);
+    return fallback;
   }
 }
