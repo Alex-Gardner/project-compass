@@ -35,3 +35,8 @@ Services:
 4. Upload a PDF and watch worker logs:
    - If key is valid: extraction path uses OpenAI.
    - If key is missing/placeholder: worker prints fallback message and continues.
+
+## PDF Parsing Performance Tuning
+- `PDF_PARSE_MAX_PAGES` (default `12`): only parse the first N pages for extraction input.
+- `PDF_TEXT_MAX_CHARS` (default `24000`): cap extracted text passed into heuristics/LLM.
+- Increase either value for higher recall, decrease for faster processing.

@@ -6,6 +6,8 @@ import type { ConstraintType, DependencyType, TaskAssignmentRow, TaskStatus } fr
 const dependencyTypes: DependencyType[] = ["finish_to_start", "start_to_start", "finish_to_finish", "start_to_finish", "none"];
 const constraintTypes: ConstraintType[] = ["none", "material", "crew", "access", "permit", "weather", "other"];
 const taskStatuses: TaskStatus[] = ["not_started", "in_progress", "blocked", "complete", "unknown"];
+const DEFAULT_PDF_PARSE_MAX_PAGES = 12;
+const DEFAULT_PDF_TEXT_MAX_CHARS = 24000;
 
 function isOpenAiConfigured(): boolean {
   const key = process.env.OPENAI_API_KEY;
@@ -31,6 +33,15 @@ function clamp(min: number, value: number, max: number): number {
 function parseEnum<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_") as T;
   return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }
 
 function rowSchemaNormalize(row: Partial<TaskAssignmentRow>, filename: string, documentId: string): TaskAssignmentRow {
@@ -117,9 +128,16 @@ function heuristicExtractRows(filename: string, documentId: string, pdfText: str
 async function extractPdfText(storagePath: string): Promise<string> {
   const file = await readFile(storagePath);
   const parser = new PDFParse({ data: file });
-  const parsed = await parser.getText();
-  await parser.destroy();
-  return normalizeText(parsed.text ?? "");
+  const maxPages = parsePositiveIntEnv("PDF_PARSE_MAX_PAGES", DEFAULT_PDF_PARSE_MAX_PAGES);
+  const maxChars = parsePositiveIntEnv("PDF_TEXT_MAX_CHARS", DEFAULT_PDF_TEXT_MAX_CHARS);
+
+  try {
+    const parsed = await parser.getText({ first: maxPages, pageJoiner: "\n", itemJoiner: " " });
+    const text = normalizeText(parsed.text ?? "");
+    return text.length > maxChars ? text.slice(0, maxChars) : text;
+  } finally {
+    await parser.destroy();
+  }
 }
 
 export async function extractTaskRowsForDemo(filename: string, documentId: string, storagePath: string): Promise<TaskAssignmentRow[]> {
