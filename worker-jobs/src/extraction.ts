@@ -21,9 +21,11 @@ function normalizeText(input: string): string {
 function normalizeDate(input: string): string {
   const trimmed = String(input ?? "").trim();
   if (!trimmed) return "";
+  const dateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}T00:00:00Z`;
   const parsed = Date.parse(trimmed);
   if (Number.isNaN(parsed)) return "";
-  return new Date(parsed).toISOString().slice(0, 10);
+  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function clamp(min: number, value: number, max: number): number {
@@ -75,7 +77,6 @@ function rowSchemaNormalize(row: Partial<TaskAssignmentRow>, filename: string, d
     constraintImpactDays: Number.isFinite(Number(row.constraintImpactDays)) ? Number(row.constraintImpactDays) : 0,
     status: parseEnum(String(row.status ?? "unknown"), taskStatuses, "unknown"),
     percentComplete: clamp(0, Number(row.percentComplete ?? 0) || 0, 100),
-    confidence: clamp(0, Number(row.confidence ?? 0.45) || 0.45, 1),
     sourcePage: Number.isFinite(Number(row.sourcePage)) ? Number(row.sourcePage) : 1,
     sourceSnippet: String(row.sourceSnippet ?? "").trim(),
     extractedAt: new Date().toISOString()
@@ -114,7 +115,6 @@ function heuristicExtractRows(filename: string, documentId: string, pdfText: str
       constraintImpactDays: 0,
       status: "unknown",
       percentComplete: 0,
-      confidence: text ? 0.55 : 0.35,
       sourcePage: 1,
       sourceSnippet: text.slice(0, 180)
     },
@@ -171,7 +171,7 @@ export async function extractTaskRowsForDemo(filename: string, documentId: strin
           content:
             `Filename: ${filename}\nDocumentId: ${documentId}\n` +
             `PDF Text:\n${pdfText.slice(0, 16000)}\n\n` +
-            "Return rows with columns: recordId, projectName, gcName, scName, trade, taskId, taskName, locationPath, upstreamTaskId, downstreamTaskId, dependencyType, lagDays, plannedStart, plannedFinish, durationDays, scAvailableFrom, scAvailableTo, allocationPct, constraintType, constraintNote, constraintImpactDays, status, percentComplete, confidence, sourcePage, sourceSnippet."
+            "Return rows with columns: recordId, projectName, gcName, scName, trade, taskId, taskName, locationPath, upstreamTaskId, downstreamTaskId, dependencyType, lagDays, plannedStart, plannedFinish, durationDays, scAvailableFrom, scAvailableTo, allocationPct, constraintType, constraintNote, constraintImpactDays, status, percentComplete, sourcePage, sourceSnippet."
         }
       ],
       text: {
@@ -211,7 +211,6 @@ export async function extractTaskRowsForDemo(filename: string, documentId: strin
                     constraintImpactDays: { type: "number" },
                     status: { type: "string" },
                     percentComplete: { type: "number" },
-                    confidence: { type: "number" },
                     sourcePage: { type: "number" },
                     sourceSnippet: { type: "string" }
                   },
@@ -219,7 +218,7 @@ export async function extractTaskRowsForDemo(filename: string, documentId: strin
                     "recordId", "projectName", "gcName", "scName", "trade", "taskId", "taskName", "locationPath",
                     "upstreamTaskId", "downstreamTaskId", "dependencyType", "lagDays", "plannedStart", "plannedFinish",
                     "durationDays", "scAvailableFrom", "scAvailableTo", "allocationPct", "constraintType", "constraintNote",
-                    "constraintImpactDays", "status", "percentComplete", "confidence", "sourcePage", "sourceSnippet"
+                    "constraintImpactDays", "status", "percentComplete", "sourcePage", "sourceSnippet"
                   ]
                 }
               }

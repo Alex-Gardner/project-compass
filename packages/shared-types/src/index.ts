@@ -14,6 +14,7 @@ export interface DocumentRecord {
 
 export interface OutputJobRecord {
   id: string;
+  taskId: string;
   documentId: string;
   status: JobStatus;
   attempts: number;
@@ -59,7 +60,6 @@ export interface TaskAssignmentRow {
   constraintImpactDays: number;
   status: TaskStatus;
   percentComplete: number;
-  confidence: number;
   sourcePage: number;
   sourceSnippet: string;
   extractedAt: string;
@@ -79,9 +79,14 @@ export interface IssueRecord {
 export interface NotificationRecord {
   id: string;
   userId: string;
+  taskId?: string;
+  documentId?: string;
   type: string;
   title: string;
   body: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
   readAt?: string;
   createdAt: string;
 }

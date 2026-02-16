@@ -26,6 +26,7 @@ export async function ensureSchema(): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS output_jobs (
       id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
       document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
       status TEXT NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -60,8 +61,8 @@ export async function ensureSchema(): Promise<void> {
       downstream_task_id TEXT NOT NULL,
       dependency_type TEXT NOT NULL,
       lag_days INTEGER NOT NULL,
-      planned_start DATE,
-      planned_finish DATE,
+      planned_start TIMESTAMPTZ,
+      planned_finish TIMESTAMPTZ,
       duration_days INTEGER NOT NULL,
       sc_available_from DATE,
       sc_available_to DATE,
@@ -71,7 +72,7 @@ export async function ensureSchema(): Promise<void> {
       constraint_impact_days INTEGER NOT NULL,
       status TEXT NOT NULL,
       percent_complete NUMERIC(5,2) NOT NULL,
-      confidence NUMERIC(4,3) NOT NULL,
+      confidence NUMERIC(4,3) NOT NULL DEFAULT 0,
       source_page INTEGER NOT NULL,
       source_snippet TEXT NOT NULL,
       extracted_at TIMESTAMPTZ NOT NULL
@@ -91,9 +92,14 @@ export async function ensureSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
+      task_id TEXT,
+      document_id TEXT,
       type TEXT NOT NULL,
       title TEXT NOT NULL,
       body TEXT NOT NULL,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      duration_ms BIGINT,
       read_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL
     );
@@ -115,6 +121,21 @@ export async function ensureSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_task_rows_sc_name ON extraction_task_rows (sc_name);
     CREATE INDEX IF NOT EXISTS idx_issues_document_status ON issues (document_id, status);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications (user_id, read_at);
+
+    ALTER TABLE output_jobs ADD COLUMN IF NOT EXISTS task_id TEXT;
+    UPDATE output_jobs SET task_id = id WHERE task_id IS NULL;
+    ALTER TABLE output_jobs ALTER COLUMN task_id SET NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_output_jobs_task_id ON output_jobs (task_id);
+
+    ALTER TABLE extraction_task_rows ALTER COLUMN planned_start TYPE TIMESTAMPTZ USING planned_start::timestamptz;
+    ALTER TABLE extraction_task_rows ALTER COLUMN planned_finish TYPE TIMESTAMPTZ USING planned_finish::timestamptz;
+    ALTER TABLE extraction_task_rows ALTER COLUMN confidence SET DEFAULT 0;
+
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS task_id TEXT;
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS document_id TEXT;
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS duration_ms BIGINT;
   `);
   } finally {
     await pool.query("SELECT pg_advisory_unlock($1)", [9021001]);
