@@ -24,16 +24,9 @@ type Doc = {
   createdAt: string;
   jobStatus: string;
   jobId: string;
-};
-
-type ExtractionField = {
-  id: string;
-  name: string;
-  value: string;
-  confidence: number;
-  sourcePage: number;
-  sourceBBox: [number, number, number, number];
-  createdAt: string;
+  taskId: string;
+  completedAt?: string;
+  durationMs?: number;
 };
 
 type TaskRow = {
@@ -61,7 +54,6 @@ type TaskRow = {
   constraintImpactDays: number;
   status: string;
   percentComplete: number;
-  confidence: number;
   sourcePage: number;
   sourceSnippet: string;
   extractedAt: string;
@@ -69,8 +61,13 @@ type TaskRow = {
 
 type Notification = {
   id: string;
+  taskId?: string;
+  documentId?: string;
   title: string;
   body: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
   createdAt: string;
 };
 
@@ -87,6 +84,14 @@ async function fetchDocuments(profile: DemoProfile): Promise<Doc[]> {
   return (await response.json()) as Doc[];
 }
 
+function formatDuration(durationMs?: number): string {
+  if (!durationMs || durationMs < 0) return "-";
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 function Shell({
   children,
   profile,
@@ -99,7 +104,10 @@ function Shell({
   return (
     <div className="layout">
       <aside>
-        <h1>Project Compass</h1>
+        <div className="brand">
+          <p className="eyebrow">Operations Console</p>
+          <h1>Project Compass</h1>
+        </div>
         <label className="profile-switcher">
           Active demo user
           <select
@@ -114,13 +122,20 @@ function Shell({
             ))}
           </select>
         </label>
-        <p className="role-pill">Role: {profile.role}</p>
+        <p className="role-pill">Role: {profile.role.replace("_", " ")}</p>
         <nav>
-          <NavLink to="/">Upload</NavLink>
-          <NavLink to="/documents">Documents</NavLink>
-          <NavLink to="/extracted">Extracted Data</NavLink>
-          <NavLink to="/issues">Issue Queue</NavLink>
-          <NavLink to="/notifications">Notifications</NavLink>
+          <NavLink to="/">
+            <span>Upload</span>
+          </NavLink>
+          <NavLink to="/documents">
+            <span>Documents</span>
+          </NavLink>
+          <NavLink to="/extracted">
+            <span>Extracted Data</span>
+          </NavLink>
+          <NavLink to="/notifications">
+            <span>Notifications</span>
+          </NavLink>
         </nav>
       </aside>
       <main>{children}</main>
@@ -150,15 +165,22 @@ function UploadPage({ profile }: { profile: DemoProfile }) {
     }
 
     const payload = await response.json();
-    setMessage(`Created document ${payload.documentId} and job ${payload.jobId}.`);
+    setMessage(`Created document ${payload.documentId}, job ${payload.jobId}, task ${payload.taskId}.`);
   }
 
   return (
-    <section>
-      <h2>Upload PDF</h2>
-      <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-      <button onClick={upload} disabled={!file}>Submit</button>
-      <p>{message}</p>
+    <section className="panel">
+      <div className="section-head">
+        <h2>Upload PDF</h2>
+        <p>Submit construction schedules and run extraction jobs.</p>
+      </div>
+      <div className="stack">
+        <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <div>
+          <button onClick={upload} disabled={!file}>Submit</button>
+        </div>
+        <p className="muted">{message}</p>
+      </div>
     </section>
   );
 }
@@ -187,61 +209,38 @@ function DocumentsPage({ profile }: { profile: DemoProfile }) {
   }, [profile]);
 
   return (
-    <section>
-      <h2>Documents / Jobs</h2>
-      <button onClick={async () => setDocs(await fetchDocuments(profile))}>Refresh</button>
-      <table>
+    <section className="panel">
+      <div className="section-head section-head-row">
+        <div>
+          <h2>Documents / Jobs</h2>
+          <p>Track ingestion and extraction run progress in real time.</p>
+        </div>
+        <button onClick={async () => setDocs(await fetchDocuments(profile))}>Refresh</button>
+      </div>
+      <div className="table-wrap">
+        <table>
         <thead>
           <tr>
             <th>File</th>
+            <th>Task ID</th>
             <th>Status</th>
             <th>Created</th>
+            <th>Finished</th>
           </tr>
         </thead>
         <tbody>
           {docs.map((doc) => (
             <tr key={doc.id}>
               <td>{doc.filename}</td>
+              <td>{doc.taskId || "-"}</td>
               <td><span className={`badge ${doc.jobStatus}`}>{doc.jobStatus}</span></td>
               <td>{new Date(doc.createdAt).toLocaleString()}</td>
+              <td>{doc.completedAt ? new Date(doc.completedAt).toLocaleString() : "-"}</td>
             </tr>
           ))}
         </tbody>
       </table>
-    </section>
-  );
-}
-
-function IssueQueuePage({ profile }: { profile: DemoProfile }) {
-  const [issues, setIssues] = React.useState<Array<{ id: string; details: string; status: string }>>([]);
-
-  const load = React.useCallback(async () => {
-    const docs = await fetchDocuments(profile);
-    const all = await Promise.all(
-      docs.map(async (doc) => {
-        const data = await fetch(`${API_BASE}/documents/${doc.id}`, { headers: authHeaders(profile) }).then((r) => r.json());
-        return data.issues.map((issue: { id: string; details: string; status: string }) => ({
-          ...issue
-        }));
-      })
-    );
-    setIssues(all.flat());
-  }, [profile]);
-
-  React.useEffect(() => {
-    load();
-  }, [load]);
-
-  return (
-    <section>
-      <h2>Issue Queue</h2>
-      <button onClick={load}>Refresh</button>
-      <ul>
-        {issues.map((issue) => (
-          <li key={issue.id}>{issue.details} ({issue.status})</li>
-        ))}
-      </ul>
-      {!issues.length && <p>No issues yet.</p>}
+      </div>
     </section>
   );
 }
@@ -249,7 +248,7 @@ function IssueQueuePage({ profile }: { profile: DemoProfile }) {
 function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
   const [docs, setDocs] = React.useState<Doc[]>([]);
   const [selectedId, setSelectedId] = React.useState("");
-  const [fields, setFields] = React.useState<ExtractionField[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = React.useState("");
   const [taskRows, setTaskRows] = React.useState<TaskRow[]>([]);
   const [rawJson, setRawJson] = React.useState<string>("{}");
   const [loading, setLoading] = React.useState(false);
@@ -269,7 +268,7 @@ function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
       return;
     }
     const data = await response.json();
-    setFields(data.fields ?? []);
+    setSelectedTaskId(String(data?.job?.taskId ?? ""));
     setTaskRows(data.taskRows ?? []);
     setRawJson(JSON.stringify(data, null, 2));
     setLoading(false);
@@ -303,8 +302,12 @@ function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
   }
 
   return (
-    <section>
-      <h2>Extracted Data</h2>
+    <section className="panel">
+      <div className="section-head">
+        <h2>Extracted Data</h2>
+        <p>Inspect normalized task records and download structured outputs.</p>
+        {selectedTaskId && <p className="muted">Processing Task ID: {selectedTaskId}</p>}
+      </div>
       <div className="toolbar">
         <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
           <option value="">Select a document</option>
@@ -318,44 +321,49 @@ function ExtractedDataPage({ profile }: { profile: DemoProfile }) {
         <button onClick={loadDetail} disabled={!selectedId}>Refresh Details</button>
         <button onClick={downloadCsv} disabled={!selectedId}>Download CSV</button>
       </div>
-      {loading && <p>Loading extraction...</p>}
+      {loading && <p className="muted">Loading extraction...</p>}
       {!loading && selectedId && (
         <>
-          <table>
+          <div className="table-wrap">
+            <table>
             <thead>
               <tr>
+                <th>Row ID</th>
                 <th>Task</th>
+                <th>Task Ref ID</th>
                 <th>Subcontractor</th>
                 <th>Trade</th>
                 <th>Dependency</th>
-                <th>Planned Dates</th>
+                <th>Start Timestamp</th>
+                <th>Finish Timestamp</th>
                 <th>Status</th>
-                <th>Confidence</th>
                 <th>Source</th>
               </tr>
             </thead>
             <tbody>
               {taskRows.map((row) => (
                 <tr key={row.recordId}>
+                  <td>{row.recordId}</td>
                   <td>{row.taskName || row.taskId || "(unknown task)"}</td>
+                  <td>{row.taskId || "-"}</td>
                   <td>{row.scName || "-"}</td>
                   <td>{row.trade || "-"}</td>
                   <td>{row.dependencyType} {row.lagDays ? `(${row.lagDays}d)` : ""}</td>
-                  <td>{row.plannedStart || "?"} {"->"} {row.plannedFinish || "?"}</td>
+                  <td>{row.plannedStart || "-"}</td>
+                  <td>{row.plannedFinish || "-"}</td>
                   <td>{row.status} ({Math.round(row.percentComplete)}%)</td>
-                  <td>{Math.round(row.confidence * 100)}%</td>
                   <td>p{row.sourcePage}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {!taskRows.length && !fields.length && <p>No extracted rows yet for this document.</p>}
-          {!taskRows.length && fields.length && <p>Row extraction not found; legacy field extraction exists.</p>}
+          </div>
+          {!taskRows.length && <p className="muted">No extracted rows yet for this document.</p>}
           <h3>Raw JSON Output</h3>
           <pre className="json-box">{rawJson}</pre>
         </>
       )}
-      {!selectedId && <p>Select a document to view extraction output.</p>}
+      {!selectedId && <p className="muted">Select a document to view extraction output.</p>}
     </section>
   );
 }
@@ -376,19 +384,27 @@ function NotificationsPage({ profile }: { profile: DemoProfile }) {
   }, [load]);
 
   return (
-    <section>
-      <h2>Notifications</h2>
-      <button onClick={load}>Refresh</button>
-      <ul>
+    <section className="panel">
+      <div className="section-head section-head-row">
+        <div>
+          <h2>Notifications</h2>
+          <p>System and workflow alerts across projects.</p>
+        </div>
+        <button onClick={load}>Refresh</button>
+      </div>
+      <ul className="stack-list">
         {notifications.map((item) => (
           <li key={item.id}>
             <strong>{item.title}</strong>
             <div>{item.body}</div>
+            <small>Task: {item.taskId || "-"} | Document: {item.documentId || "-"}</small>
+            <small>Finished: {item.completedAt ? new Date(item.completedAt).toLocaleString() : "-"}</small>
+            <small>Duration: {item.durationMs ? formatDuration(item.durationMs) : "-"}</small>
             <small>{new Date(item.createdAt).toLocaleString()}</small>
           </li>
         ))}
       </ul>
-      {!notifications.length && <p>No notifications yet.</p>}
+      {!notifications.length && <p className="muted">No notifications yet.</p>}
     </section>
   );
 }
@@ -410,7 +426,6 @@ function App() {
           <Route path="/" element={<UploadPage profile={profile} />} />
           <Route path="/documents" element={<DocumentsPage profile={profile} />} />
           <Route path="/extracted" element={<ExtractedDataPage profile={profile} />} />
-          <Route path="/issues" element={<IssueQueuePage profile={profile} />} />
           <Route path="/notifications" element={<NotificationsPage profile={profile} />} />
         </Routes>
       </Shell>

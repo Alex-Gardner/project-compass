@@ -35,8 +35,8 @@ const taskRowCsvHeaders = [
   "downstream_task_id",
   "dependency_type",
   "lag_days",
-  "planned_start",
-  "planned_finish",
+  "planned_start_ts",
+  "planned_finish_ts",
   "duration_days",
   "sc_available_from",
   "sc_available_to",
@@ -46,7 +46,6 @@ const taskRowCsvHeaders = [
   "constraint_impact_days",
   "status",
   "percent_complete",
-  "confidence",
   "source_page",
   "source_snippet",
   "extracted_at"
@@ -64,6 +63,7 @@ app.post("/documents", async (request, reply) => {
 
   const documentId = newId("doc");
   const jobId = newId("job");
+  const taskId = newId("task");
   const filePath = join(uploadDir, `${documentId}-${part.filename}`);
 
   await new Promise<void>((resolve, reject) => {
@@ -85,9 +85,9 @@ app.post("/documents", async (request, reply) => {
     );
 
     await client.query(
-      `INSERT INTO output_jobs (id, document_id, status, attempts, created_at)
-       VALUES ($1, $2, 'queued', 0, $3)`,
-      [jobId, documentId, now]
+      `INSERT INTO output_jobs (id, task_id, document_id, status, attempts, created_at)
+       VALUES ($1, $2, $3, 'queued', 0, $4)`,
+      [jobId, taskId, documentId, now]
     );
 
     await client.query(
@@ -102,14 +102,14 @@ app.post("/documents", async (request, reply) => {
         now,
         newId("aud"),
         jobId,
-        JSON.stringify({ documentId })
+        JSON.stringify({ documentId, taskId })
       ]
     );
 
     await client.query("COMMIT");
-    await redis.lpush(queueKey, JSON.stringify({ jobId, documentId }));
+    await redis.lpush(queueKey, JSON.stringify({ jobId, taskId, documentId }));
 
-    return reply.status(201).send({ documentId, jobId });
+    return reply.status(201).send({ documentId, jobId, taskId });
   } catch (error) {
     await client.query("ROLLBACK");
     request.log.error({ err: error }, "failed to create document job");
@@ -127,7 +127,15 @@ app.get("/documents", async () => {
            d.uploaded_by AS "uploadedBy",
            d.created_at AS "createdAt",
            j.id AS "jobId",
-           j.status AS "jobStatus"
+           j.task_id AS "taskId",
+           j.status AS "jobStatus",
+           j.started_at AS "startedAt",
+           j.completed_at AS "completedAt",
+           CASE
+             WHEN j.started_at IS NOT NULL AND j.completed_at IS NOT NULL
+             THEN FLOOR(EXTRACT(EPOCH FROM (j.completed_at - j.started_at)) * 1000)::BIGINT
+             ELSE NULL
+           END AS "durationMs"
     FROM documents d
     LEFT JOIN output_jobs j ON j.document_id = d.id
     ORDER BY d.created_at DESC
@@ -140,7 +148,7 @@ app.get("/documents/:id", async (request, reply) => {
   const schema = z.object({ id: z.string() });
   const { id } = schema.parse(request.params);
 
-  const [docRes, jobRes, fieldRes, issueRes, taskRowRes] = await Promise.all([
+  const [docRes, jobRes, taskRowRes] = await Promise.all([
     pool.query(
       `SELECT id, filename, storage_path AS "storagePath", uploaded_by AS "uploadedBy", created_at AS "createdAt"
        FROM documents WHERE id = $1`,
@@ -148,20 +156,8 @@ app.get("/documents/:id", async (request, reply) => {
     ),
     pool.query(
       `SELECT id, document_id AS "documentId", status, attempts, error, started_at AS "startedAt",
-              completed_at AS "completedAt", created_at AS "createdAt"
+              completed_at AS "completedAt", created_at AS "createdAt", task_id AS "taskId"
        FROM output_jobs WHERE document_id = $1 LIMIT 1`,
-      [id]
-    ),
-    pool.query(
-      `SELECT id, document_id AS "documentId", name, value, confidence, source_page AS "sourcePage",
-              source_bbox AS "sourceBBox", created_at AS "createdAt"
-       FROM extraction_fields WHERE document_id = $1 ORDER BY created_at ASC`,
-      [id]
-    ),
-    pool.query(
-      `SELECT id, document_id AS "documentId", field_id AS "fieldId", type, severity, status,
-              details, created_at AS "createdAt"
-       FROM issues WHERE document_id = $1 ORDER BY created_at ASC`,
       [id]
     ),
     pool.query(
@@ -179,18 +175,17 @@ app.get("/documents/:id", async (request, reply) => {
          downstream_task_id AS "downstreamTaskId",
          dependency_type AS "dependencyType",
          lag_days AS "lagDays",
-         COALESCE(to_char(planned_start, 'YYYY-MM-DD'), '') AS "plannedStart",
-         COALESCE(to_char(planned_finish, 'YYYY-MM-DD'), '') AS "plannedFinish",
+         COALESCE(to_char(planned_start AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS "plannedStart",
+         COALESCE(to_char(planned_finish AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS "plannedFinish",
          duration_days AS "durationDays",
-         COALESCE(to_char(sc_available_from, 'YYYY-MM-DD'), '') AS "scAvailableFrom",
-         COALESCE(to_char(sc_available_to, 'YYYY-MM-DD'), '') AS "scAvailableTo",
+         COALESCE(to_char(sc_available_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS "scAvailableFrom",
+         COALESCE(to_char(sc_available_to AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS "scAvailableTo",
          allocation_pct AS "allocationPct",
          constraint_type AS "constraintType",
          constraint_note AS "constraintNote",
          constraint_impact_days AS "constraintImpactDays",
          status,
          percent_complete AS "percentComplete",
-         confidence,
          source_page AS "sourcePage",
          source_snippet AS "sourceSnippet",
          extracted_at AS "extractedAt"
@@ -206,8 +201,6 @@ app.get("/documents/:id", async (request, reply) => {
   return {
     document: docRes.rows[0],
     job: jobRes.rows[0] ?? null,
-    fields: fieldRes.rows.map((row) => ({ ...row, confidence: Number(row.confidence) })),
-    issues: issueRes.rows,
     taskRows: taskRowRes.rows.map((row) => ({
       ...row,
       lagDays: Number(row.lagDays),
@@ -215,7 +208,6 @@ app.get("/documents/:id", async (request, reply) => {
       allocationPct: Number(row.allocationPct),
       constraintImpactDays: Number(row.constraintImpactDays),
       percentComplete: Number(row.percentComplete),
-      confidence: Number(row.confidence),
       sourcePage: Number(row.sourcePage)
     }))
   };
@@ -230,13 +222,13 @@ app.get("/documents/:id/export.csv", async (request, reply) => {
     pool.query(
       `SELECT record_id, document_id, project_name, gc_name, sc_name, trade, task_id, task_name, location_path,
               upstream_task_id, downstream_task_id, dependency_type, lag_days,
-              COALESCE(to_char(planned_start, 'YYYY-MM-DD'), '') AS planned_start,
-              COALESCE(to_char(planned_finish, 'YYYY-MM-DD'), '') AS planned_finish,
+              COALESCE(to_char(planned_start AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS planned_start_ts,
+              COALESCE(to_char(planned_finish AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS planned_finish_ts,
               duration_days,
-              COALESCE(to_char(sc_available_from, 'YYYY-MM-DD'), '') AS sc_available_from,
-              COALESCE(to_char(sc_available_to, 'YYYY-MM-DD'), '') AS sc_available_to,
+              COALESCE(to_char(sc_available_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS sc_available_from,
+              COALESCE(to_char(sc_available_to AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS sc_available_to,
               allocation_pct, constraint_type, constraint_note, constraint_impact_days, status, percent_complete,
-              confidence, source_page, source_snippet, extracted_at
+              source_page, source_snippet, extracted_at
        FROM extraction_task_rows
        WHERE document_id = $1
        ORDER BY extracted_at ASC, record_id ASC`,
@@ -263,7 +255,7 @@ app.get("/jobs/:id", async (request, reply) => {
   const { id } = schema.parse(request.params);
 
   const jobRes = await pool.query(
-    `SELECT id, document_id AS "documentId", status, attempts, error, started_at AS "startedAt",
+    `SELECT id, task_id AS "taskId", document_id AS "documentId", status, attempts, error, started_at AS "startedAt",
             completed_at AS "completedAt", created_at AS "createdAt"
      FROM output_jobs WHERE id = $1`,
     [id]
@@ -289,7 +281,9 @@ app.get("/notifications", async (request) => {
   const userId = String((request.headers["x-user-id"] as string) ?? "dev-user");
 
   const { rows } = await pool.query(
-    `SELECT id, user_id AS "userId", type, title, body, read_at AS "readAt", created_at AS "createdAt"
+    `SELECT id, user_id AS "userId", task_id AS "taskId", document_id AS "documentId", type, title, body,
+            started_at AS "startedAt", completed_at AS "completedAt", duration_ms AS "durationMs",
+            read_at AS "readAt", created_at AS "createdAt"
      FROM notifications
      WHERE user_id = $1
      ORDER BY created_at DESC`,
